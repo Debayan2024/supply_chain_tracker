@@ -15,6 +15,10 @@ const STAGE_OWNER = {
     SOLD: 'Org2MSP',
 };
 
+// Raw batches are stored under this key prefix so they never mix with products.
+const BATCH_PREFIX = 'BATCH_';
+const batchKey = (id) => BATCH_PREFIX + id;
+
 // Turn the ledger's protobuf timestamp into a normal date string.
 function toIso(ts) {
     const s = ts.seconds;
@@ -28,11 +32,50 @@ function toIso(ts) {
 
 class SupplyChainContract extends Contract {
 
+    // Register a raw-material batch from a supplier. Only Org1 may do this.
+    async CreateBatch(ctx, id, material, quantity, unit, supplier) {
+        const mspId = ctx.clientIdentity.getMSPID();
+        if (mspId !== 'Org1MSP') {
+            throw new Error('Only Org1 (supplier) can create raw batches');
+        }
+        if (!id || !material || !unit || !supplier) {
+            throw new Error('id, material, unit and supplier are all required');
+        }
+        const qty = Number(quantity);
+        if (!Number.isFinite(qty) || qty <= 0) {
+            throw new Error('Batch quantity must be a number greater than 0');
+        }
+        const existing = await ctx.stub.getState(batchKey(id));
+        if (existing && existing.length > 0) {
+            throw new Error(`Batch ${id} already exists`);
+        }
+
+        const batch = {
+            id: id,
+            material: material,
+            quantity: qty,
+            unit: unit,
+            supplier: supplier,
+            remaining: qty,
+            usedBy: [],
+            createdBy: mspId,
+            time: toIso(ctx.stub.getTxTimestamp()),
+        };
+        await ctx.stub.putState(batchKey(id), Buffer.from(JSON.stringify(batch)));
+        return JSON.stringify(batch);
+    }
+
     // Create a new product at the first stage. Only Org1 (supplier side) may do this.
-    async CreateProduct(ctx, id, name, quantity) {
+    // sources is a JSON text like [{"batchId":"B-1","used":40}]; it is optional.
+    // Every source is checked and its batch's remaining quantity is reduced. If ANY source
+    // is invalid the transaction fails and nothing at all is written.
+    async CreateProduct(ctx, id, name, quantity, unit, sources) {
         const mspId = ctx.clientIdentity.getMSPID();   // which organisation signed this request?
         if (mspId !== 'Org1MSP') {
             throw new Error('Only Org1 (supplier) can create products');
+        }
+        if (String(id).startsWith(BATCH_PREFIX)) {
+            throw new Error(`Product ids may not start with ${BATCH_PREFIX}`);
         }
 
         const existing = await ctx.stub.getState(id);  // look the id up in the ledger
@@ -40,10 +83,46 @@ class SupplyChainContract extends Contract {
             throw new Error(`Product ${id} already exists`);
         }
 
+        let list;
+        try {
+            list = sources ? JSON.parse(sources) : [];
+        } catch (e) {
+            throw new Error('sources must be valid JSON, e.g. [{"batchId":"B-1","used":40}]');
+        }
+        if (!Array.isArray(list)) {
+            throw new Error('sources must be a list');
+        }
+        const seen = new Set();
+        const batches = [];
+        for (const src of list) {
+            const used = Number(src && src.used);
+            if (!src || !src.batchId) throw new Error('Each source needs a batchId');
+            if (!Number.isFinite(used) || used <= 0) {
+                throw new Error(`Source ${src.batchId}: used must be a number greater than 0`);
+            }
+            if (seen.has(src.batchId)) throw new Error(`Batch ${src.batchId} is listed twice`);
+            seen.add(src.batchId);
+
+            const data = await ctx.stub.getState(batchKey(src.batchId));
+            if (!data || data.length === 0) throw new Error(`Batch ${src.batchId} does not exist`);
+            const batch = JSON.parse(data.toString());
+            if (used > batch.remaining) {
+                throw new Error(`Batch ${src.batchId} has only ${batch.remaining} ${batch.unit} remaining, cannot use ${used}`);
+            }
+            batch.remaining -= used;
+            batch.usedBy.push({ productId: id, used: used });
+            batches.push(batch);
+        }
+        for (const batch of batches) {
+            await ctx.stub.putState(batchKey(batch.id), Buffer.from(JSON.stringify(batch)));
+        }
+
         const product = {
             id: id,
             name: name,
             quantity: Number(quantity),
+            unit: unit || '',
+            sources: list.map((x) => ({ batchId: x.batchId, used: Number(x.used) })),
             stage: 'RAW_MATERIAL',
             owner: mspId,
             events: [
@@ -117,12 +196,75 @@ class SupplyChainContract extends Contract {
         const iterator = await ctx.stub.getStateByRange('', '');
         let r = await iterator.next();
         while (!r.done) {
-            const p = JSON.parse(Buffer.from(r.value.value).toString('utf8'));
-            results.push({ id: p.id, name: p.name, quantity: p.quantity, stage: p.stage, owner: p.owner });
+            if (!r.value.key.startsWith(BATCH_PREFIX)) {   // batches live in the same ledger; skip them here
+                const p = JSON.parse(Buffer.from(r.value.value).toString('utf8'));
+                results.push({ id: p.id, name: p.name, quantity: p.quantity, unit: p.unit || '', stage: p.stage, owner: p.owner });
+            }
             r = await iterator.next();
         }
         await iterator.close();
         return JSON.stringify(results);
+    }
+
+    // Read one raw batch.
+    async GetBatch(ctx, id) {
+        const data = await ctx.stub.getState(batchKey(id));
+        if (!data || data.length === 0) {
+            throw new Error(`Batch ${id} does not exist`);
+        }
+        return data.toString();
+    }
+
+    // All raw batches (keys BATCH_ to BATCH_~ cover everything with the prefix).
+    async ListBatches(ctx) {
+        const results = [];
+        const iterator = await ctx.stub.getStateByRange(BATCH_PREFIX, BATCH_PREFIX + '~');
+        let r = await iterator.next();
+        while (!r.done) {
+            results.push(JSON.parse(Buffer.from(r.value.value).toString('utf8')));
+            r = await iterator.next();
+        }
+        await iterator.close();
+        return JSON.stringify(results);
+    }
+
+    // Trace a product back to the batches and suppliers it was made from.
+    async GetLineage(ctx, productId) {
+        const data = await ctx.stub.getState(productId);
+        if (!data || data.length === 0 || String(productId).startsWith(BATCH_PREFIX)) {
+            throw new Error(`Product ${productId} does not exist`);
+        }
+        const product = JSON.parse(data.toString());
+        const sources = [];
+        for (const src of product.sources || []) {
+            const b = await ctx.stub.getState(batchKey(src.batchId));
+            const batch = b && b.length ? JSON.parse(b.toString()) : null;
+            sources.push({
+                batchId: src.batchId,
+                used: src.used,
+                material: batch ? batch.material : null,
+                unit: batch ? batch.unit : null,
+                supplier: batch ? batch.supplier : null,
+                remaining: batch ? batch.remaining : null,
+            });
+        }
+        return JSON.stringify({
+            id: product.id, name: product.name, quantity: product.quantity,
+            unit: product.unit || '', stage: product.stage, sources: sources,
+        });
+    }
+
+    // The reverse question: which products consumed this batch, and how much each?
+    async GetBatchUsage(ctx, batchId) {
+        const data = await ctx.stub.getState(batchKey(batchId));
+        if (!data || data.length === 0) {
+            throw new Error(`Batch ${batchId} does not exist`);
+        }
+        const batch = JSON.parse(data.toString());
+        return JSON.stringify({
+            id: batch.id, material: batch.material, quantity: batch.quantity,
+            unit: batch.unit, remaining: batch.remaining, usedBy: batch.usedBy,
+        });
     }
 
     async GetHistory(ctx, id) {

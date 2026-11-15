@@ -68,10 +68,25 @@ th{color:var(--mute);font-weight:600;font-size:12px}
       <div class="form">
         <input id="cid" placeholder="Product ID, e.g. PRD-200">
         <input id="cname" placeholder="Name, e.g. Denim Jacket">
-        <input id="cqty" type="number" min="1" placeholder="Quantity">
+        <div class="row"><input id="cqty" type="number" min="1" placeholder="Quantity"><input id="cunit" placeholder="Unit, e.g. pcs"></div>
+        <input id="csrc" placeholder="Sources: BATCH-ID:amount, ... e.g. B-COT-1:40, B-DYE-1:5">
         <button id="create">Create on blockchain</button>
       </div>
       <div class="msg" id="cmsg"></div>
+    </div>
+    <div class="card">
+      <h2>Raw batches</h2>
+      <div id="blist"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="card">
+      <h2>Create raw batch (Org1 only)</h2>
+      <div class="form">
+        <input id="bid" placeholder="Batch ID, e.g. B-COT-1">
+        <div class="row"><input id="bmat" placeholder="Material"><input id="bsup" placeholder="Supplier"></div>
+        <div class="row"><input id="bqty" type="number" min="1" placeholder="Quantity"><input id="bunit" placeholder="Unit, e.g. kg"></div>
+        <button id="bcreate">Create batch</button>
+      </div>
+      <div class="msg" id="bmsg"></div>
     </div>
   </div>
 
@@ -90,6 +105,10 @@ th{color:var(--mute);font-weight:600;font-size:12px}
     <div class="card" id="events" style="display:none">
       <h2>Journey (events stored in the product)</h2>
       <div id="dtimeline"></div>
+    </div>
+    <div class="card" id="lineage" style="display:none">
+      <h2>Lineage (raw batches this product was made from)</h2>
+      <div id="dlineage"></div>
     </div>
     <div class="card" id="hist" style="display:none">
       <h2>Ledger history (every transaction that changed this product)</h2>
@@ -126,7 +145,7 @@ async function loadList() {
     $('list').innerHTML = items.length ? items.map((p) => `
       <div class="item ${p.id === selected ? 'sel' : ''}" data-id="${esc(p.id)}">
         <div class="top"><b>${esc(p.id)}</b>${badge(p.stage)}</div>
-        <small>${esc(p.name)} · qty ${esc(p.quantity)} · held by ${esc(p.owner)}</small>
+        <small>${esc(p.name)} · qty ${esc(p.quantity)} ${esc(p.unit)} · held by ${esc(p.owner)}</small>
       </div>`).join('') : '<div class="empty">No products yet. Create one below.</div>';
     document.querySelectorAll('.item').forEach((el) => el.onclick = () => select(el.dataset.id));
   } catch (e) { $('list').innerHTML = `<div class="empty" style="color:var(--bad)">${esc(e.message)}</div>`; }
@@ -137,12 +156,12 @@ function select(id) { selected = id; $('mmsg').textContent = ''; loadList(); loa
 async function loadDetail() {
   if (!selected) return;
   try {
-    const [p, h] = await Promise.all([api('/api/products/' + selected), api('/api/products/' + selected + '/history')]);
+    const [p, h, lin] = await Promise.all([api('/api/products/' + selected), api('/api/products/' + selected + '/history'), api('/api/products/' + selected + '/lineage')]);
     const idx = STAGES.indexOf(p.stage);
     nextStage = STAGES[idx + 1] || null;
 
     $('dhead').innerHTML = `<div class="title"><h3>${esc(p.name)}</h3>${badge(p.stage)}</div>
-      <div class="meta">ID ${esc(p.id)} · quantity ${esc(p.quantity)} · currently held by ${esc(p.owner)}</div>`;
+      <div class="meta">ID ${esc(p.id)} · quantity ${esc(p.quantity)} ${esc(p.unit)} · currently held by ${esc(p.owner)}</div>`;
     $('dpipe').innerHTML = '<div class="pipeline">' + STAGES.map((s, i) => {
       const cls = (i < idx || (i === idx && s === 'SOLD')) ? 'done' : (i === idx ? 'cur' : '');
       return `<div class="step ${cls}"><div class="bar"></div>${pretty(s)}</div>`;
@@ -161,7 +180,12 @@ async function loadDetail() {
       h.map((x) => `<tr><td>${when(x.time)}</td><td>${pretty(x.stage)}</td><td>${esc(x.owner)}</td>
         <td class="tx" title="${esc(x.txId)}">${esc(x.txId.slice(0, 20))}…</td></tr>`).join('') + '</table>';
 
-    ['detail','events','hist'].forEach((id) => $(id).style.display = 'block');
+    $('dlineage').innerHTML = lin.sources.length ? '<table><tr><th>Batch</th><th>Material</th><th>Supplier</th><th>Used</th><th>Batch remaining</th></tr>' +
+      lin.sources.map((x) => `<tr><td>${esc(x.batchId)}</td><td>${esc(x.material)}</td><td>${esc(x.supplier)}</td>
+        <td>${esc(x.used)} ${esc(x.unit)}</td><td>${esc(x.remaining)} ${esc(x.unit)}</td></tr>`).join('') + '</table>'
+      : '<div class="empty">No raw batches recorded for this product.</div>';
+
+    ['detail','events','lineage','hist'].forEach((id) => $(id).style.display = 'block');
     $('hint').style.display = 'none';
   } catch (e) { $('hint').style.display = 'block'; $('hint').innerHTML = `<div class="empty" style="color:var(--bad)">${esc(e.message)}</div>`; }
 }
@@ -180,14 +204,38 @@ $('move').onclick = async () => {
 
 $('create').onclick = async () => {
   try {
-    const p = await post('/api/products', {org: $('org').value, id: $('cid').value.trim(), name: $('cname').value.trim(), quantity: $('cqty').value});
+    const sources = $('csrc').value.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+      const [batchId, used] = x.split(':').map((y) => y.trim());
+      return {batchId, used: Number(used)};
+    });
+    const p = await post('/api/products', {org: $('org').value, id: $('cid').value.trim(), name: $('cname').value.trim(), quantity: $('cqty').value, unit: $('cunit').value.trim(), sources});
     setMsg('cmsg', 'Created ' + p.id, true);
-    $('cid').value = $('cname').value = $('cqty').value = '';
-    await loadList(); select(p.id);
+    $('cid').value = $('cname').value = $('cqty').value = $('cunit').value = $('csrc').value = '';
+    await loadList(); await loadBatches(); select(p.id);
   } catch (e) { setMsg('cmsg', 'Rejected by chaincode: ' + e.message, false); }
 };
 
-loadList();
-setInterval(() => { loadList(); loadDetail(); }, 6000);
+async function loadBatches() {
+  try {
+    const items = (await api('/api/batches')).sort((a, b) => a.id.localeCompare(b.id));
+    $('blist').innerHTML = items.length ? items.map((b) => `
+      <div class="item" style="cursor:default">
+        <div class="top"><b>${esc(b.id)}</b><span class="badge">${esc(b.remaining)} / ${esc(b.quantity)} ${esc(b.unit)} left</span></div>
+        <small>${esc(b.material)} · supplier ${esc(b.supplier)}</small>
+      </div>`).join('') : '<div class="empty">No batches yet. Create one below.</div>';
+  } catch (e) { $('blist').innerHTML = `<div class="empty" style="color:var(--bad)">${esc(e.message)}</div>`; }
+}
+
+$('bcreate').onclick = async () => {
+  try {
+    const b = await post('/api/batches', {org: $('org').value, id: $('bid').value.trim(), material: $('bmat').value.trim(), supplier: $('bsup').value.trim(), quantity: $('bqty').value, unit: $('bunit').value.trim()});
+    setMsg('bmsg', 'Created batch ' + b.id, true);
+    $('bid').value = $('bmat').value = $('bsup').value = $('bqty').value = $('bunit').value = '';
+    await loadBatches();
+  } catch (e) { setMsg('bmsg', 'Rejected by chaincode: ' + e.message, false); }
+};
+
+loadList(); loadBatches();
+setInterval(() => { loadList(); loadBatches(); loadDetail(); }, 6000);
 </script>
 </body></html>

@@ -64,10 +64,36 @@ app.use(express.static(path.join(__dirname, 'public'))); // dashboard goes here 
 // Create a product (chaincode only allows Org1)
 app.post('/api/products', async (req, res) => {
   try {
-    const { org, id, name, quantity } = req.body;
-    const out = await getContract(org).submitTransaction('CreateProduct', String(id), String(name), String(quantity));
+    const { org, id, name, quantity, unit, sources } = req.body;
+    const out = await getContract(org).submitTransaction('CreateProduct', String(id), String(name), String(quantity),
+      String(unit || ''), JSON.stringify(sources || []));
     res.json(JSON.parse(decode(out)));
   } catch (e) { res.status(400).json({ error: errorText(e) }); }
+});
+
+// Create a raw-material batch (chaincode only allows Org1)
+app.post('/api/batches', async (req, res) => {
+  try {
+    const { org, id, material, quantity, unit, supplier } = req.body;
+    const out = await getContract(org).submitTransaction('CreateBatch', String(id), String(material), String(quantity), String(unit), String(supplier));
+    res.json(JSON.parse(decode(out)));
+  } catch (e) { res.status(400).json({ error: errorText(e) }); }
+});
+
+// List all raw batches
+app.get('/api/batches', async (req, res) => {
+  try {
+    const out = await getContract(req.query.org || 'org1').evaluateTransaction('ListBatches');
+    res.json(JSON.parse(decode(out)));
+  } catch (e) { res.status(500).json({ error: errorText(e) }); }
+});
+
+// Read one batch
+app.get('/api/batches/:id', async (req, res) => {
+  try {
+    const out = await getContract(req.query.org || 'org1').evaluateTransaction('GetBatch', req.params.id);
+    res.json(JSON.parse(decode(out)));
+  } catch (e) { res.status(404).json({ error: errorText(e) }); }
 });
 
 // Move a product to the next stage
@@ -83,6 +109,14 @@ app.post('/api/products/:id/stage', async (req, res) => {
 app.get('/api/products/:id', async (req, res) => {
   try {
     const out = await getContract(req.query.org || 'org1').evaluateTransaction('GetProduct', req.params.id);
+    res.json(JSON.parse(decode(out)));
+  } catch (e) { res.status(404).json({ error: errorText(e) }); }
+});
+
+// Which batches and suppliers a product was made from
+app.get('/api/products/:id/lineage', async (req, res) => {
+  try {
+    const out = await getContract(req.query.org || 'org1').evaluateTransaction('GetLineage', req.params.id);
     res.json(JSON.parse(decode(out)));
   } catch (e) { res.status(404).json({ error: errorText(e) }); }
 });
