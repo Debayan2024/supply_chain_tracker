@@ -1,0 +1,18 @@
+$ docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" | grep -v "^dev-"   (chaincode containers omitted)
+NAMES                                                                                                         STATUS          IMAGE
+peer0.org3.example.com                                                                                        Up 15 minutes   hyperledger/fabric-peer:latest
+couchdb4                                                                                                      Up 15 minutes   couchdb:3.4.2
+ca_org3                                                                                                       Up 15 minutes   hyperledger/fabric-ca:latest
+peer0.org2.example.com                                                                                        Up 11 hours     hyperledger/fabric-peer:latest
+peer0.org1.example.com                                                                                        Up 11 hours     hyperledger/fabric-peer:latest
+orderer4.example.com                                                                                          Up 11 hours     hyperledger/fabric-orderer:latest
+orderer3.example.com                                                                                          Up 11 hours     hyperledger/fabric-orderer:latest
+orderer2.example.com                                                                                          Up 11 hours     hyperledger/fabric-orderer:latest
+orderer.example.com                                                                                           Up 11 hours     hyperledger/fabric-orderer:latest
+couchdb1                                                                                                      Up 11 hours     couchdb:3.4.2
+couchdb0                                                                                                      Up 11 hours     couchdb:3.4.2
+ca_org1                                                                                                       Up 11 hours     hyperledger/fabric-ca:latest
+ca_org2                                                                                                       Up 11 hours     hyperledger/fabric-ca:latest
+ca_orderer                                                                                                    Up 11 hours     hyperledger/fabric-ca:latest
+
+Counts: peers=3 orderers=4 CAs=4 couchdb=3

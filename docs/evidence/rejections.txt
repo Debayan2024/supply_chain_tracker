@@ -1,0 +1,42 @@
+=== 1. Org2 tries to create a product
+Expect: REJECTED (only Org1MSP may create)
+Request:  POST /products  {"org":"org2","id":"PRD-901","name":"Rejection Test Shirt","quantity":10,"unit":"pcs"}
+HTTP:     400
+Response: {"error":"Only Org1 (supplier) can create products"}
+
+=== 2. Org1 creates PRD-901 (control case)
+Expect: SUCCESS
+Request:  POST /products  {"org":"org1","id":"PRD-901","name":"Rejection Test Shirt","quantity":10,"unit":"pcs"}
+HTTP:     200
+Response: {"id":"PRD-901","name":"Rejection Test Shirt","quantity":10,"unit":"pcs","sources":[],"stage":"RAW_MATERIAL","owner":"Org1MSP","events":[{"stage":"RAW_MATERIAL","by":"Org1MSP","note":"Product created","txId":"781aee1c6ec309b0acefa33eee35110350c5e1a8221d510d869282107887e84e","time":"2026-11-15T20:56:44.000Z"}]}
+
+=== 3. Org1 creates PRD-901 again
+Expect: REJECTED (duplicate id)
+Request:  POST /products  {"org":"org1","id":"PRD-901","name":"Rejection Test Shirt","quantity":10,"unit":"pcs"}
+HTTP:     400
+Response: {"error":"Product PRD-901 already exists"}
+
+=== 4. Org1 skips RAW_MATERIAL -> FINISHED_GOODS
+Expect: REJECTED (no skipping stages)
+Request:  POST /products/PRD-901/stage  {"org":"org1","stage":"FINISHED_GOODS","note":"skip attempt"}
+HTTP:     400
+Response: {"error":"Cannot move from RAW_MATERIAL to FINISHED_GOODS. Next allowed stage: SEMI_FINISHED"}
+
+=== 5. Org2 moves PRD-901 to SEMI_FINISHED
+Expect: REJECTED (stage belongs to Org1)
+Request:  POST /products/PRD-901/stage  {"org":"org2","stage":"SEMI_FINISHED","note":"wrong org"}
+HTTP:     400
+Response: {"error":"Org2MSP is not allowed to move a product to SEMI_FINISHED (only Org1MSP)"}
+
+=== 6. Org1 moves PRD-901 to SEMI_FINISHED
+Expect: SUCCESS
+Request:  POST /products/PRD-901/stage  {"org":"org1","stage":"SEMI_FINISHED","note":"Correct move"}
+HTTP:     200
+Response: {"events":[{"by":"Org1MSP","note":"Product created","stage":"RAW_MATERIAL","time":"2026-11-15T20:56:44.000Z","txId":"781aee1c6ec309b0acefa33eee35110350c5e1a8221d510d869282107887e84e"},{"stage":"SEMI_FINISHED","by":"Org1MSP","note":"Correct move","txId":"78ed868aa828eaf9e7d6eccc87beae22a10b763410e532681aa8d3c716b11c0f","time":"2026-11-15T20:56:44.000Z"}],"id":"PRD-901","name":"Rejection Test Shirt","owner":"Org1MSP","quantity":10,"sources":[],"stage":"SEMI_FINISHED","unit":"pcs"}
+
+=== 7. History of PRD-901
+Expect: ONLY the 2 successful events (created, SEMI_FINISHED); no trace of rejected attempts
+Request:  GET /products/PRD-901/history
+HTTP:     200
+Response: [{"txId":"78ed868aa828eaf9e7d6eccc87beae22a10b763410e532681aa8d3c716b11c0f","time":"2026-11-15T20:56:44.000Z","stage":"SEMI_FINISHED","owner":"Org1MSP"},{"txId":"781aee1c6ec309b0acefa33eee35110350c5e1a8221d510d869282107887e84e","time":"2026-11-15T20:56:44.000Z","stage":"RAW_MATERIAL","owner":"Org1MSP"}]
+
