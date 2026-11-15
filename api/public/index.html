@@ -23,7 +23,8 @@ main{display:grid;grid-template-columns:340px 1fr;gap:18px;padding:18px 24px;max
 .item small{color:var(--mute)}
 .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#e8eefc;color:var(--cur);white-space:nowrap}
 .badge.sold{background:#e1f5ec;color:var(--done)}
-.form{display:grid;gap:8px}
+.form{display:grid;gap:8px;grid-template-columns:minmax(0,1fr)}
+.form input{width:100%;min-width:0}
 .row{display:flex;gap:8px}
 .row input{flex:1;min-width:0}
 .msg{margin-top:8px;font-size:13px;min-height:18px}
