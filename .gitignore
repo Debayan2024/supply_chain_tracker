@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+
+# Fabric crypto material and keys (never commit)
+organizations/
+keystore/
+*.pem
+*.key
+
+# secrets and logs
+.env
+*.log
+
+# package-lock.json is intentionally NOT ignored

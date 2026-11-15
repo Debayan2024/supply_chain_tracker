@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Supply Chain Tracker</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--ink:#1c2430;--mute:#6b7787;--line:#e3e8ef;--done:#1f9d6b;--cur:#2563eb;--pend:#cfd6e0;--bad:#c0392b}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;background:#111c2e;color:#fff}
+header h1{font-size:18px;margin:0}
+header label{font-size:13px;color:#b9c4d4;display:flex;gap:8px;align-items:center}
+select,input,button{font:inherit;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+button{background:var(--cur);color:#fff;border-color:var(--cur);cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+main{display:grid;grid-template-columns:340px 1fr;gap:18px;padding:18px 24px;max-width:1200px;margin:auto}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
+.card h2{font-size:12px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.item{padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer}
+.item:hover{border-color:var(--cur)}
+.item.sel{border-color:var(--cur);background:#eff4ff}
+.item .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.item small{color:var(--mute)}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#e8eefc;color:var(--cur);white-space:nowrap}
+.badge.sold{background:#e1f5ec;color:var(--done)}
+.form{display:grid;gap:8px}
+.row{display:flex;gap:8px}
+.row input{flex:1;min-width:0}
+.msg{margin-top:8px;font-size:13px;min-height:18px}
+.msg.err{color:var(--bad)} .msg.ok{color:var(--done)}
+.pipeline{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:6px 0 4px}
+.step{text-align:center;font-size:11px;color:var(--mute)}
+.step .bar{height:8px;border-radius:4px;background:var(--pend);margin-bottom:6px}
+.step.done .bar{background:var(--done)} .step.done{color:var(--ink)}
+.step.cur .bar{background:var(--cur);box-shadow:0 0 0 3px #cfdcff} .step.cur{color:var(--cur);font-weight:600}
+.title{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px}
+.title h3{margin:0;font-size:20px}
+.meta{color:var(--mute);margin-bottom:14px}
+.timeline{border-left:2px solid var(--line);margin:0 0 0 6px;padding:0 0 0 16px;list-style:none}
+.timeline li{position:relative;margin-bottom:14px}
+.timeline li::before{content:"";position:absolute;left:-23px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--done)}
+.timeline li:last-child::before{background:var(--cur)}
+.timeline .when{color:var(--mute);font-size:12px}
+.tx{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--mute);font-weight:600;font-size:12px}
+.empty{color:var(--mute);padding:8px 0}
+</style></head>
+<body>
+<header>
+  <h1>Supply Chain Tracker <span style="font-weight:400;color:#8fa0b8;font-size:13px">· Hyperledger Fabric</span></h1>
+  <label>Acting as
+    <select id="org">
+      <option value="org1">Org1 (manufacturer)</option>
+      <option value="org2">Org2 (logistics &amp; retail)</option>
+    </select>
+  </label>
+</header>
+<main>
+  <div>
+    <div class="card">
+      <h2>Products on the ledger</h2>
+      <div id="list"><div class="empty">Loading...</div></div>
+    </div>
+    <div class="card">
+      <h2>Create product (Org1 only)</h2>
+      <div class="form">
+        <input id="cid" placeholder="Product ID, e.g. PRD-200">
+        <input id="cname" placeholder="Name, e.g. Denim Jacket">
+        <input id="cqty" type="number" min="1" placeholder="Quantity">
+        <button id="create">Create on blockchain</button>
+      </div>
+      <div class="msg" id="cmsg"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" id="detail" style="display:none">
+      <div id="dhead"></div>
+      <h2>Stage pipeline</h2>
+      <div id="dpipe"></div>
+      <h2 style="margin-top:18px">Move to next stage</h2>
+      <div class="row">
+        <input id="note" placeholder="Note (optional), e.g. Stored in rack B4">
+        <button id="move">Move</button>
+      </div>
+      <div class="msg" id="mmsg"></div>
+    </div>
+    <div class="card" id="events" style="display:none">
+      <h2>Journey (events stored in the product)</h2>
+      <div id="dtimeline"></div>
+    </div>
+    <div class="card" id="hist" style="display:none">
+      <h2>Ledger history (every transaction that changed this product)</h2>
+      <div id="dhist"></div>
+    </div>
+    <div class="card" id="hint"><div class="empty">Select a product on the left to see its journey.</div></div>
+  </div>
+</main>
+
+<script>
+const STAGES = ['RAW_MATERIAL','SEMI_FINISHED','FINISHED_GOODS','WAREHOUSE','DISTRIBUTION','RETAIL','SOLD'];
+const OWNER = {SEMI_FINISHED:'Org1',FINISHED_GOODS:'Org1',WAREHOUSE:'Org2',DISTRIBUTION:'Org2',RETAIL:'Org2',SOLD:'Org2'};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pretty = (s) => s.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+const when = (t) => new Date(t).toLocaleString();
+const shortTx = (t) => esc(t.slice(0, 12)) + '…';
+let selected = null;
+let nextStage = null;
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+}
+const post = (path, body) => api(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+const setMsg = (id, text, ok) => { $(id).textContent = text; $(id).className = 'msg ' + (ok ? 'ok' : 'err'); };
+const badge = (s) => `<span class="badge ${s === 'SOLD' ? 'sold' : ''}">${pretty(s)}</span>`;
+
+async function loadList() {
+  try {
+    const items = (await api('/api/products')).sort((a, b) => a.id.localeCompare(b.id));
+    $('list').innerHTML = items.length ? items.map((p) => `
+      <div class="item ${p.id === selected ? 'sel' : ''}" data-id="${esc(p.id)}">
+        <div class="top"><b>${esc(p.id)}</b>${badge(p.stage)}</div>
+        <small>${esc(p.name)} · qty ${esc(p.quantity)} · held by ${esc(p.owner)}</small>
+      </div>`).join('') : '<div class="empty">No products yet. Create one below.</div>';
+    document.querySelectorAll('.item').forEach((el) => el.onclick = () => select(el.dataset.id));
+  } catch (e) { $('list').innerHTML = `<div class="empty" style="color:var(--bad)">${esc(e.message)}</div>`; }
+}
+
+function select(id) { selected = id; $('mmsg').textContent = ''; loadList(); loadDetail(); }
+
+async function loadDetail() {
+  if (!selected) return;
+  try {
+    const [p, h] = await Promise.all([api('/api/products/' + selected), api('/api/products/' + selected + '/history')]);
+    const idx = STAGES.indexOf(p.stage);
+    nextStage = STAGES[idx + 1] || null;
+
+    $('dhead').innerHTML = `<div class="title"><h3>${esc(p.name)}</h3>${badge(p.stage)}</div>
+      <div class="meta">ID ${esc(p.id)} · quantity ${esc(p.quantity)} · currently held by ${esc(p.owner)}</div>`;
+    $('dpipe').innerHTML = '<div class="pipeline">' + STAGES.map((s, i) => {
+      const cls = (i < idx || (i === idx && s === 'SOLD')) ? 'done' : (i === idx ? 'cur' : '');
+      return `<div class="step ${cls}"><div class="bar"></div>${pretty(s)}</div>`;
+    }).join('') + '</div>';
+
+    const btn = $('move');
+    if (nextStage) { btn.disabled = false; btn.textContent = 'Move to ' + pretty(nextStage) + ' (' + OWNER[nextStage] + ' only)'; }
+    else { btn.disabled = true; btn.textContent = 'Journey complete'; }
+
+    $('dtimeline').innerHTML = '<ul class="timeline">' + p.events.map((e) => `
+      <li><b>${pretty(e.stage)}</b> <span class="when">· ${when(e.time)} · by ${esc(e.by)}</span>
+        ${e.note ? '<div>' + esc(e.note) + '</div>' : ''}
+        <div class="tx" title="${esc(e.txId)}">tx ${shortTx(e.txId)}</div></li>`).join('') + '</ul>';
+
+    $('dhist').innerHTML = '<table><tr><th>Time</th><th>Stage</th><th>Owner</th><th>Transaction ID</th></tr>' +
+      h.map((x) => `<tr><td>${when(x.time)}</td><td>${pretty(x.stage)}</td><td>${esc(x.owner)}</td>
+        <td class="tx" title="${esc(x.txId)}">${esc(x.txId.slice(0, 20))}…</td></tr>`).join('') + '</table>';
+
+    ['detail','events','hist'].forEach((id) => $(id).style.display = 'block');
+    $('hint').style.display = 'none';
+  } catch (e) { $('hint').style.display = 'block'; $('hint').innerHTML = `<div class="empty" style="color:var(--bad)">${esc(e.message)}</div>`; }
+}
+
+$('move').onclick = async () => {
+  if (!selected || !nextStage) return;
+  $('move').disabled = true;
+  setMsg('mmsg', 'Submitting to the blockchain and waiting for commit...', true);
+  try {
+    await post('/api/products/' + selected + '/stage', {org: $('org').value, stage: nextStage, note: $('note').value});
+    $('note').value = '';
+    setMsg('mmsg', 'Committed: moved to ' + pretty(nextStage), true);
+  } catch (e) { setMsg('mmsg', 'Rejected by chaincode: ' + e.message, false); }
+  await loadList(); await loadDetail();
+};
+
+$('create').onclick = async () => {
+  try {
+    const p = await post('/api/products', {org: $('org').value, id: $('cid').value.trim(), name: $('cname').value.trim(), quantity: $('cqty').value});
+    setMsg('cmsg', 'Created ' + p.id, true);
+    $('cid').value = $('cname').value = $('cqty').value = '';
+    await loadList(); select(p.id);
+  } catch (e) { setMsg('cmsg', 'Rejected by chaincode: ' + e.message, false); }
+};
+
+loadList();
+setInterval(() => { loadList(); loadDetail(); }, 6000);
+</script>
+</body></html>
